@@ -1833,19 +1833,15 @@ export function formatResources(resources: any): string {
 // Keys and values are URI-encoded so their own delimiters survive; the operator,
 // when present, is the literal token "include" or "exclude".
 export function parseColumnFilters(filtersParam: string | null): Record<string, string[]> {
-  // Prototype-less accumulator: the keys come from the URL, so a plain object
-  // would expose Object.prototype as a write target (js/remote-property-injection).
-  const filters: Record<string, string[]> = Object.create(null)
-  if (!filtersParam) return filters
+  if (!filtersParam) return {}
+  // Accumulate in a Map: the keys come from the URL, and a Map keeps them out
+  // of a computed property write on a plain object (js/remote-property-injection).
+  const filters = new Map<string, string[]>()
   for (const pair of filtersParam.split('|')) {
     const parsed = parseColumnFilterPair(pair)
-    // Guard the dynamic write: the key comes from the URL, so reject the
-    // prototype-polluting names right at the assignment (js/remote-property-injection).
-    if (parsed && parsed.key !== '__proto__' && parsed.key !== 'prototype' && parsed.key !== 'constructor') {
-      filters[parsed.key] = parsed.values
-    }
+    if (parsed) filters.set(parsed.key, parsed.values)
   }
-  return filters
+  return Object.fromEntries(filters)
 }
 
 // Serialize column filters to URL param format. Columns listed in `excludes`
@@ -1870,28 +1866,19 @@ export function serializeColumnFilters(
 // `filters` param so the operator can't drift out of sync with the values it
 // negates — a lone exclude operator with no values is structurally impossible.
 export function parseColumnFilterExcludes(filtersParam: string | null): Record<string, boolean> {
-  // Prototype-less accumulator: see parseColumnFilters (js/remote-property-injection).
-  const excludes: Record<string, boolean> = Object.create(null)
-  if (!filtersParam) return excludes
+  if (!filtersParam) return {}
+  // Accumulate in a Map: see parseColumnFilters (js/remote-property-injection).
+  const excludes = new Map<string, boolean>()
   for (const pair of filtersParam.split('|')) {
     const parsed = parseColumnFilterPair(pair)
-    // Guard the dynamic write against prototype-polluting keys from the URL
-    // right at the assignment (js/remote-property-injection).
-    if (
-      parsed && parsed.values.length &&
-      parsed.key !== '__proto__' && parsed.key !== 'prototype' && parsed.key !== 'constructor'
-    ) {
-      // Values are last-write-wins per key in parseColumnFilters, so the mode
-      // must track the same final segment: a later include overrides an
-      // earlier exclude for the same column, otherwise the two disagree.
-      if (parsed.exclude) {
-        excludes[parsed.key] = true
-      } else {
-        delete excludes[parsed.key]
-      }
-    }
+    if (!parsed || !parsed.values.length) continue
+    // Values are last-write-wins per key in parseColumnFilters, so the mode
+    // must track the same final segment: a later include overrides an earlier
+    // exclude for the same column, otherwise the two disagree.
+    if (parsed.exclude) excludes.set(parsed.key, true)
+    else excludes.delete(parsed.key)
   }
-  return excludes
+  return Object.fromEntries(excludes)
 }
 
 // Split a single "col[:operator]:values" pair into its decoded key, values, and
